@@ -23,10 +23,46 @@ curl -sSL https://raw.githubusercontent.com/itcaat/mtproto-installer/main/instal
 1. Сгенерируйте секрет: `openssl rand -hex 16`. Скопируйте `telemt.toml.example` в `telemt.toml`, подставьте секрет и при необходимости домен в `censorship.tls_domain`.
 2. В `traefik/dynamic/tcp.yml` домен в `HostSNI(...)` должен совпадать с `censorship.tls_domain` в `telemt.toml`.
 3. Запуск: `docker compose up -d`.
-4. Ссылка: `tg://proxy?server=ВАШ_IP&port=443&secret=ВАШ_СЕКРЕТ`.
+4. Ссылка: выполните `./regen-link.sh` — он сам достанет секрет и домен из `telemt.toml`, посчитает `hex(домен)` и соберёт ссылку `tg://proxy?server=...&port=443&secret=ee<секрет><hex_домена>`.
+
+## Смена домена маскировки
+
+Домен маскировки зашит в сам секрет ссылки (`ee` + секрет + `hex(домен)`) и отправляется клиентом как TLS SNI. Поэтому поменять только `tls_domain` в `telemt.toml` недостаточно: старые ссылки продолжат слать старый SNI, и Telemt их отклонит (`unknown_sni_action=Drop`). Домен должен совпадать сразу в трёх местах — `telemt.toml`, `traefik/dynamic/tcp.yml` и в самой ссылке.
+
+`regen-link.sh` делает всё это сам, hex домена руками считать не нужно. Запускайте из каталога установки (по умолчанию `mtproxy-data`):
+
+```bash
+cd mtproxy-data
+./regen-link.sh                # показать текущую ссылку (ничего не меняя)
+./regen-link.sh newdomain.ru   # сменить домен во всех конфигах, перезапустить стек, выдать новую ссылку
+./regen-link.sh --help         # справка
+```
+
+При смене домена скрипт правит `censorship.tls_domain` в `telemt.toml`, `HostSNI(...)` в `traefik/dynamic/tcp.yml`, перезапускает контейнеры (`docker compose restart`) и печатает новую ссылку `tg://proxy?server=...&port=443&secret=ee<секрет><hex_домена>`. Секрет и домен берутся из `telemt.toml` — отдельно указывать ничего не нужно.
+
+Опции:
+
+| Опция | Назначение |
+|---|---|
+| `-d, --domain <домен>` | новый домен маскировки (то же, что позиционный аргумент) |
+| `--dir <путь>` | каталог установки, если запускаете не из него (по умолчанию `.` либо `./mtproxy-data`) |
+| `--no-restart` | не перезапускать `docker compose` после смены домена |
+| `-h, --help` | показать справку |
+
+Переменные окружения:
+
+| Переменная | Назначение |
+|---|---|
+| `FAKE_DOMAIN` | новый домен вместо аргумента: `FAKE_DOMAIN=newdomain.ru ./regen-link.sh` |
+| `INSTALL_DIR` | каталог установки (аналог `--dir`) |
+| `SERVER_IP` | явный IP в ссылке (по умолчанию определяется через `ifconfig.me`) |
+| `LINK_PORT` | порт в ссылке (по умолчанию `443`) |
+
+После смены домена раздайте новую ссылку всем клиентам — старая работать не будет.
 
 ## Полезные команды
 
+- Показать / сменить ссылку: `./regen-link.sh [новый-домен]`
 - Логи: `docker compose logs -f`
 - Остановка: `docker compose down`
 - Перезапуск после смены конфига: `docker compose up -d --force-recreate`
@@ -43,6 +79,7 @@ curl -sSL https://raw.githubusercontent.com/itcaat/mtproto-installer/main/instal
 mtproxy-data/
 ├── docker-compose.yml
 ├── telemt.toml
+├── regen-link.sh     # смена домена маскировки / перегенерация ссылки
 └── traefik/
     ├── dynamic/
     │   └── tcp.yml    # маршрут по SNI → telemt:1234

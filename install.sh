@@ -88,8 +88,9 @@ download_and_configure() {
 	    "$tcp_yml" > "${tcp_yml}.tmp" && mv "${tcp_yml}.tmp" "$tcp_yml"
 	info "Настроен Traefik: SNI ${FAKE_DOMAIN} -> telemt:${TELEMT_INTERNAL_PORT} (TLS passthrough)"
 
-	# Сохранить секрет для вывода в конце
-	echo "$SECRET" > "${INSTALL_DIR}/.secret"
+	# Скрипт перегенерации ссылки / смены домена (ссылка собирается сама, без ручного hex)
+	fetch "${REPO_RAW}/regen-link.sh" "${INSTALL_DIR}/regen-link.sh"
+	chmod +x "${INSTALL_DIR}/regen-link.sh"
 }
 
 # --- Запуск контейнеров
@@ -100,41 +101,15 @@ run_compose() {
 	info "Контейнеры запущены."
 }
 
-# --- Вывод ссылки
-print_link() {
-  local SECRET TLS_DOMAIN DOMAIN_HEX LONG_SECRET SERVER_IP LINK
-
-  SECRET=$(cat "${INSTALL_DIR}/.secret" 2>/dev/null || true)
-  [[ -z "$SECRET" ]] && err "Секрет не найден в ${INSTALL_DIR}/.secret"
-
-  # Достаём tls_domain из telemt.toml
-  TLS_DOMAIN=$(grep -E '^[[:space:]]*tls_domain[[:space:]]*=' "${INSTALL_DIR}/telemt.toml" \
-    | head -n1 | sed -E 's/.*=[[:space:]]*"([^"]+)".*/\1/')
-  [[ -z "$TLS_DOMAIN" ]] && err "tls_domain не найден в ${INSTALL_DIR}/telemt.toml"
-
-  # hex(domain)
-  DOMAIN_HEX=$(printf '%s' "$TLS_DOMAIN" | xxd -p -c 256)
-
-  # Если в файле короткий секрет (32 hex), достраиваем fake-tls secret:
-  # ee + 32hex + hex(domain)
-  if [[ "$SECRET" =~ ^[0-9a-fA-F]{32}$ ]]; then
-    LONG_SECRET="ee${SECRET}${DOMAIN_HEX}"
-  else
-    # если уже длинный (например начинается с ee), используем как есть
-    LONG_SECRET="$SECRET"
-  fi
-
-  SERVER_IP=$(curl -s --connect-timeout 3 ifconfig.me 2>/dev/null || echo "YOUR_SERVER_IP")
-  LINK="tg://proxy?server=${SERVER_IP}&port=443&secret=${LONG_SECRET}"
-
-  echo ""
-  echo -e "${GREEN}--- Ссылка для Telegram ---${NC}"
-  echo "${LINK}"
-  echo ""
+# --- Справочная информация (ссылку печатает regen-link.sh)
+print_footer() {
   echo "Сохраните ссылку и не публикуйте её публично."
   echo "Данные установки: ${INSTALL_DIR}"
-  echo "Логи: cd ${INSTALL_DIR} && docker compose logs -f"
+  echo "Логи:      cd ${INSTALL_DIR} && docker compose logs -f"
   echo "Остановка: cd ${INSTALL_DIR} && docker compose down"
+  echo "Показать ссылку ещё раз:      cd ${INSTALL_DIR} && ./regen-link.sh"
+  echo "Сменить домен маскировки:     cd ${INSTALL_DIR} && ./regen-link.sh newdomain.ru"
+  echo "  (ссылка пересоберётся сама, стек перезапустится — раздайте новую ссылку клиентам)"
 }
 
 # --- Main
@@ -144,7 +119,8 @@ main() {
 	prompt_fake_domain
 	download_and_configure
 	run_compose
-	print_link
+	INSTALL_DIR="${INSTALL_DIR}" bash "${INSTALL_DIR}/regen-link.sh" --dir "${INSTALL_DIR}" --no-restart
+	print_footer
 }
 
 main "$@"
